@@ -4,7 +4,7 @@ User model for authentication and user management.
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 from sqlmodel import SQLModel, Field, Relationship
-from app.models.mixins import TimeStampMixin
+from app.models.mixins import TimestampMixin
 from enum import Enum
 
 if TYPE_CHECKING:
@@ -14,7 +14,7 @@ class UserRole(str,Enum):
     CUSTOMER = "CUSTOMER"
     ADMIN = "ADMIN"
     
-class User(SQLModel, TimeStampMixin, table=True):
+class User(SQLModel, TimestampMixin, table=True):
     __tablename__ = "users"
     id: UUID = Field(default_factory = uuid4, primary_key=True)
     email: str = Field(unique=True, index=True, max_length=255)

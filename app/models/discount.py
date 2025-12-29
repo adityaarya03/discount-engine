@@ -3,6 +3,7 @@ Discount models: DiscountRule (with JSONB config) and AppliedDiscount (audit tra
 """
 from typing import Optional, TYPE_CHECKING, Any
 from uuid import UUID, uuid4
+from datetime import datetime, UTC
 from decimal import Decimal
 from enum import Enum
 from sqlmodel import SQLModel, Field, Relationship, Column, JSON
@@ -113,7 +114,7 @@ class AppliedDiscount(SQLModel, table=True):
     #   "items_affected": ["item_id_1", "item_id_2"]
     # }
     
-    created_at: str = Field(default_factory=lambda: str(uuid4()))  # Timestamp
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
     
     # Relationships
     order: "Order" = Relationship(back_populates="applied_discounts")

@@ -18,9 +18,9 @@ if TYPE_CHECKING:
     from app.models.user import User
     
 class DiscountEngine:
-    
-    def __init__ (self, sesson:Session):
-        self.session = Session
+
+    def __init__(self, session: Session):
+        self.session = session
         
     def get_active_discount_rules(self) -> list[DiscountRule]:
         

@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 from decimal import Decimal
 from sqlmodel import SQLModel, Field, Relationship
-from app.models.mixins import TimeStampMixin
+from app.models.mixins import TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.order import OrderItem
 
 
-class Category(SQLModel, TimeStampMixin, table=True):
+class Category(SQLModel, TimestampMixin, table=True):
     __tablename__ = "categories"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -27,7 +27,7 @@ class Category(SQLModel, TimeStampMixin, table=True):
         return f"<Category {self.name}>"
 
 
-class Product(SQLModel, TimeStampMixin, table=True):
+class Product(SQLModel, TimestampMixin, table=True):
 
     __tablename__ = "products"
 
