@@ -8,6 +8,20 @@ from app.schemas.order import (
     OrderItemResponse,
     AppliedDiscountResponse,
 )
+from app.schemas.product import (
+    CategoryCreate,
+    CategoryUpdate,
+    CategoryResponse,
+    ProductCreate,
+    ProductUpdate,
+    ProductResponse,
+    ProductWithCategoryResponse,
+)
+from app.schemas.discount import (
+    DiscountRuleCreate,
+    DiscountRuleUpdate,
+    DiscountRuleResponse,
+)
 
 __all__ = [
     "UserRegister",
@@ -20,4 +34,14 @@ __all__ = [
     "OrderListResponse",
     "OrderItemResponse",
     "AppliedDiscountResponse",
+    "CategoryCreate",
+    "CategoryUpdate",
+    "CategoryResponse",
+    "ProductCreate",
+    "ProductUpdate",
+    "ProductResponse",
+    "ProductWithCategoryResponse",
+    "DiscountRuleCreate",
+    "DiscountRuleUpdate",
+    "DiscountRuleResponse",
 ]
