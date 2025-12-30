@@ -687,5 +687,3 @@ MIT License - feel free to use for learning purposes.
 - **SQLModel** for the elegant ORM
 
 ---
-
-**Built with ❤️ using FastAPI, PostgreSQL, and modern Python practices**
