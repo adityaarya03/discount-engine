@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from app.core.database import engine, create_db_and_tables
 from app.models.user import User, UserRole
 from app.models.product import Category, Product
-from app.models.discount import DiscountRule, DiscountType
+from app.models.discount import DiscountRule, DiscountScope, DiscountValueType
 from app.core.security import get_password_hash
 
 
@@ -117,60 +117,166 @@ def seed_products(session: Session, categories: dict):
 
 
 def seed_discount_rules(session: Session, categories: dict):
-    """Create discount rules."""
+    """Create discount rules using generic scope + value_type design."""
     print("💰 Seeding discount rules...")
-    
+
     rules = [
-        # 1. Percentage discount on cart > ₹5000
+
+        # 1. CART-level PERCENTAGE discount with max cap (Assignment Scenario 1)
+        # Can stack with Rewarded Buyer ONLY if user is loyalty member
         DiscountRule(
-            name="10% off on orders above ₹5000",
-            discount_type=DiscountType.PERCENTAGE,
+            name="10% off on orders above ₹5000 (max ₹1000)",
+            scope=DiscountScope.CART,
+            value_type=DiscountValueType.PERCENTAGE,
+            value=Decimal("10.00"),
             priority=2,
             is_active=True,
-            is_stackable=False,
+            is_stackable=True,  # Can stack
+            coupon_code=None,  # Auto-apply
             config={
                 "conditions": {"min_cart_value": 5000},
-                "action": {"percentage": 10}
+                "max_discount_amount": 1000,
+                "loyalty_stacking_only": True  # But ONLY for loyalty members (10+ orders)
             }
         ),
-        
-        # 2. Loyalty flat discount
+
+        # 2. CART-level FLAT loyalty reward (Assignment Scenario 2)
+        # After 5 completed purchases, user gets ₹500 off on 6th transaction
+        # Can stack with 10% discount ONLY if user is loyalty member
+        # NOTE: Without usage_count tracking, this applies on every order after 5 purchases
+        # In production, you'd track discount usage or mark as used after first application
         DiscountRule(
-            name="₹500 off for loyal customers",
-            discount_type=DiscountType.FLAT_LOYALTY,
+            name="₹500 Loyalty Reward (After 5 Purchases)",
+            scope=DiscountScope.CART,
+            value_type=DiscountValueType.FLAT,
+            value=Decimal("500.00"),
             priority=1,
             is_active=True,
-            is_stackable=True,
+            is_stackable=True,  # Can stack
+            coupon_code=None,  # Auto-apply
             config={
                 "conditions": {
-                    "min_purchases": 5,
+                    "min_purchases": 5,  # Must have 5+ COMPLETED orders
                     "status_filter": ["COMPLETED"]
                 },
-                "action": {"flat_amount": 500}
+                "loyalty_stacking_only": True  # Can ONLY stack for loyalty members (10+ orders)
             }
         ),
-        
-        # 3. Category-based discount on Electronics
+
+        # 3. CATEGORY-level PERCENTAGE discount (Assignment Scenario 3)
         DiscountRule(
             name="5% off on 3+ Electronics items",
-            discount_type=DiscountType.CATEGORY_BASED,
+            scope=DiscountScope.CATEGORY,
+            value_type=DiscountValueType.PERCENTAGE,
+            value=Decimal("5.00"),
             priority=3,
             is_active=True,
-            is_stackable=True,
+            is_stackable=False,
+            coupon_code=None,  # Auto-apply
             config={
                 "conditions": {
                     "category_id": str(categories["electronics"].id),
                     "min_quantity": 3
                 },
-                "action": {"percentage": 5}
+                "max_discount_amount": None,
+                "loyalty_stacking_only": False  # Can stack for any user
+            }
+        ),
+
+        # ============================================
+        # COUPON CODES (Manual Entry)
+        # ============================================
+
+        # 4. CART-level FLAT coupon
+        DiscountRule(
+            name="₹500 Flat Off Coupon",
+            scope=DiscountScope.CART,
+            value_type=DiscountValueType.FLAT,
+            value=Decimal("500.00"),
+            priority=2,
+            is_active=True,
+            is_stackable=True,
+            coupon_code="FLAT500",
+            config={
+                "conditions": {"min_cart_value": 2000},
+                "loyalty_stacking_only": False  # Can stack for any user
+            }
+        ),
+
+        # 5. CART-level PERCENTAGE coupon with max cap
+        DiscountRule(
+            name="20% Off - Save Big (max ₹800)",
+            scope=DiscountScope.CART,
+            value_type=DiscountValueType.PERCENTAGE,
+            value=Decimal("20.00"),
+            priority=2,
+            is_active=True,
+            is_stackable=False,
+            coupon_code="SAVE20",
+            config={
+                "conditions": {"min_cart_value": 3000},
+                "max_discount_amount": 800,
+                "loyalty_stacking_only": False
+            }
+        ),
+
+        # 6. CATEGORY-level PERCENTAGE coupon (Electronics)
+        DiscountRule(
+            name="Electronics Bonanza - 15% Off (max ₹600)",
+            scope=DiscountScope.CATEGORY,
+            value_type=DiscountValueType.PERCENTAGE,
+            value=Decimal("15.00"),
+            priority=3,
+            is_active=True,
+            is_stackable=False,
+            coupon_code="ELEC15",
+            config={
+                "conditions": {
+                    "category_id": str(categories["electronics"].id),
+                    "min_quantity": 1
+                },
+                "max_discount_amount": 600,
+                "loyalty_stacking_only": False  # Can stack for any user
+            }
+        ),
+
+        # 7. CART-level FLAT VIP coupon for loyalty members
+        DiscountRule(
+            name="VIP Loyalty Reward ₹1000",
+            scope=DiscountScope.CART,
+            value_type=DiscountValueType.FLAT,
+            value=Decimal("1000.00"),
+            priority=1,
+            is_active=True,
+            is_stackable=True,
+            coupon_code="VIP1000",
+            config={
+                "conditions": {},
+                "loyalty_stacking_only": True  # Can ONLY stack for loyalty members (10+ orders)
+            }
+        ),
+
+        # 8. CART-level FLAT Fashion coupon
+        DiscountRule(
+            name="Fashion Week - ₹300 Off",
+            scope=DiscountScope.CART,
+            value_type=DiscountValueType.FLAT,
+            value=Decimal("300.00"),
+            priority=3,
+            is_active=True,
+            is_stackable=True,
+            coupon_code="FASHION300",
+            config={
+                "conditions": {"min_cart_value": 1500},
+                "loyalty_stacking_only": False  # Can stack for any user
             }
         ),
     ]
-    
+
     session.add_all(rules)
     session.commit()
-    
-    print(f"   ✅ Created {len(rules)} discount rules")
+
+    print(f"   ✅ Created {len(rules)} discount rules (3 auto-apply + 5 coupons)")
 
 
 def seed_admin_user(session: Session):

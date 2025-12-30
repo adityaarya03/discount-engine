@@ -1,8 +1,14 @@
+"""
+Generic discount strategy for all discount types.
+
+This module provides a single GenericDiscountStrategy that handles all combinations
+of scope (CART, CATEGORY, PRODUCT) and value_type (PERCENTAGE, FLAT, BOGO).
+"""
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
-from sqlmodel import Session, select, func
+from sqlmodel import Session
 
 if TYPE_CHECKING:
     from app.models.order import Order, OrderItem
@@ -11,6 +17,8 @@ if TYPE_CHECKING:
 
 
 class DiscountStrategy(ABC):
+    """Base class for discount strategies."""
+
     def __init__(self, rule: "DiscountRule", session: Session):
         self.rule = rule
         self.session = session
@@ -20,148 +28,198 @@ class DiscountStrategy(ABC):
     def is_applicable(self, order: "Order", user: "User") -> bool:
         """Check if discount can be applied to this order."""
         pass
-    
+
     @abstractmethod
     def calculate(self, order: "Order", user: "User") -> dict:
-        """
-        Calculate discount amount.
-        """
+        """Calculate discount amount."""
         pass
-    
-class PercentageDiscountStrategy(DiscountStrategy):
-    def is_applicable(self, order: "Order", user: "User") -> bool:
-        min_value = Decimal(str(self.config["conditions"]["min_cart_value"]))
-        return order.subtotal >= min_value
-    
-    def calculate(self, order:"Order", user:"User") -> dict:
-        percentage = Decimal(str(self.config["action"]["percentage"]))
-        discount_amount = (order.subtotal * percentage / 100).quantize(Decimal("0.01"))
-        
-        return {
-            "discount_amount": discount_amount,
-            "calculation_details":{
-                "type":"percentage",
-                "original_amount": float(order.subtotal),
-                "percentage": float(percentage),
-                "discount_amount": float(discount_amount),
-                "condition_met": f"Cart value ₹{order.subtotal} >= ₹{self.config['conditions']['min_cart_value']}"
-            }
-        }
-        
-class FlatLoyaltyDiscountStrategy(DiscountStrategy):
+
+    def _apply_max_cap(self, discount_amount: Decimal) -> Decimal:
+        """
+        Apply max_discount_amount cap if specified in config.
+        This is a shared utility for all strategies.
+        """
+        max_cap = self.config.get("max_discount_amount")
+        if max_cap is not None:
+            max_cap_decimal = Decimal(str(max_cap))
+            return min(discount_amount, max_cap_decimal)
+        return discount_amount
+
+
+class GenericDiscountStrategy(DiscountStrategy):
     """
-    Flat discount for loyal customers after N purchases.
-    
-    Config example:
-    {
-        "conditions": {
-            "min_purchases": 5,
-            "status_filter": ["COMPLETED"]
-        },
-        "action": {"flat_amount": 500}
-    }
+    Universal strategy that handles all scope + value_type combinations.
+
+    Supported combinations:
+    - CART + PERCENTAGE: % off entire cart (e.g., 10% off cart > ₹5000)
+    - CART + FLAT: Flat discount on cart (e.g., ₹500 off cart > ₹2000)
+    - CATEGORY + PERCENTAGE: % off category items (e.g., 15% off Electronics)
+    - CATEGORY + FLAT: Flat discount on category (e.g., ₹300 off Fashion)
+    - PRODUCT + PERCENTAGE: % off specific products
+    - PRODUCT + FLAT: Flat discount on specific products
     """
-    
+
     def is_applicable(self, order: "Order", user: "User") -> bool:
-        from app.models.order import Order, OrderStatus
-        
-        # Count completed orders (excluding current order)
-        min_purchases = self.config["conditions"]["min_purchases"]
-        status_filter = self.config["conditions"].get("status_filter", ["COMPLETED"])
-        
-        # Convert status strings to enum values
-        status_enums = [OrderStatus(s) for s in status_filter]
-        
-        query = select(func.count(Order.id)).where(
-            Order.user_id == user.id,
-            Order.status.in_(status_enums),
-            Order.id != order.id  # Exclude current order
+        """
+        Check if discount is applicable based on scope and conditions.
+
+        Uses Chain of Responsibility pattern for condition checking.
+        This satisfies:
+        - Single Responsibility: Delegates to specialized condition checkers
+        - Open-Closed Principle: Add new conditions by registering new checkers
+
+        Returns:
+            True if all conditions are met
+        """
+        from app.services.discount_engine.conditions import get_condition_chain
+
+        conditions = self.config.get("conditions", {})
+
+        # Delegate to condition chain for validation
+        condition_chain = get_condition_chain()
+        all_passed, failure_reason = condition_chain.check_all(
+            order=order,
+            user=user,
+            conditions=conditions,
+            session=self.session
         )
-        
-        result = self.session.exec(query)
-        completed_count = result.one()
-        
-        return completed_count >= min_purchases
-    
+
+        return all_passed
+
     def calculate(self, order: "Order", user: "User") -> dict:
-        flat_amount = Decimal(str(self.config["action"]["flat_amount"]))
-        
-        # Cap discount at order subtotal (can't be negative)
-        discount_amount = min(flat_amount, order.subtotal).quantize(Decimal("0.01"))
-        
-        return {
-            "discount_amount": discount_amount,
-            "calculation_details": {
-                "type": "flat_loyalty",
-                "flat_amount": float(flat_amount),
-                "discount_amount": float(discount_amount),
-                "condition_met": f"User has completed {self.config['conditions']['min_purchases']} eligible purchases"
+        """
+        Calculate discount amount based on scope and value_type.
+
+        Returns:
+            Dictionary with discount_amount and calculation_details
+        """
+        from app.models.discount import DiscountScope, DiscountValueType
+
+        # Determine calculation base (what amount to apply discount to)
+        if self.rule.scope == DiscountScope.CART:
+            base_amount = order.subtotal
+            items_affected = [str(item.id) for item in order.items]
+
+        elif self.rule.scope == DiscountScope.CATEGORY:
+            category_id = UUID(self.config["conditions"]["category_id"])
+            base_amount = sum(
+                item.subtotal
+                for item in order.items
+                if item.product_category_id == category_id
+            )
+            items_affected = [
+                str(item.id)
+                for item in order.items
+                if item.product_category_id == category_id
+            ]
+
+        elif self.rule.scope == DiscountScope.PRODUCT:
+            product_ids = self.config["conditions"]["product_ids"]
+            base_amount = sum(
+                item.subtotal
+                for item in order.items
+                if str(item.product_id) in product_ids
+            )
+            items_affected = [
+                str(item.id)
+                for item in order.items
+                if str(item.product_id) in product_ids
+            ]
+
+        else:
+            # Unknown scope
+            base_amount = Decimal("0.00")
+            items_affected = []
+
+        # Calculate discount based on value_type
+        if self.rule.value_type == DiscountValueType.PERCENTAGE:
+            discount_amount = (Decimal(str(base_amount)) * self.rule.value / 100).quantize(
+                Decimal("0.01")
+            )
+            max_cap = self.config.get("max_discount_amount")
+            capped_amount = self._apply_max_cap(discount_amount)
+
+            return {
+                "discount_amount": capped_amount,
+                "calculation_details": {
+                    "scope": self.rule.scope.value,
+                    "value_type": "percentage",
+                    "base_amount": float(base_amount),
+                    "percentage": float(self.rule.value),
+                    "calculated_discount": float(discount_amount),
+                    "discount_amount": float(capped_amount),
+                    "max_cap": float(max_cap) if max_cap else None,
+                    "cap_applied": capped_amount < discount_amount,
+                    "items_affected": items_affected,
+                },
             }
-        }
-        
-class CategoryBasedDiscountStrategy(DiscountStrategy):
-    """
-    Percentage discount on specific category items.
-    
-    Config example:
-    {
-        "conditions": {
-            "category_id": "uuid-here",
-            "min_quantity": 3
-        },
-        "action": {"percentage": 5}
-    }
-    """
-    
-    def is_applicable(self, order: "Order", user: "User") -> bool:
-        category_id = UUID(self.config["conditions"]["category_id"])
-        min_quantity = self.config["conditions"]["min_quantity"]
-        
-        # Sum quantities for items in target category
-        # Using denormalized category_id from order_items for performance
-        total_quantity = sum(
-            item.quantity 
-            for item in order.items 
-            if item.product_category_id == category_id
-        )
-        
-        return total_quantity >= min_quantity
-    
-    def calculate(self, order: "Order", user: "User") -> dict:
-        category_id = UUID(self.config["conditions"]["category_id"])
-        percentage = Decimal(str(self.config["action"]["percentage"]))
-        
-        # Calculate discount only on category items
-        category_items_total = sum(
-            item.subtotal 
-            for item in order.items 
-            if item.product_category_id == category_id
-        )
-        
-        discount_amount = (Decimal(str(category_items_total)) * percentage / 100).quantize(Decimal("0.01"))
-        
-        affected_items = [
-            str(item.id) 
-            for item in order.items 
-            if item.product_category_id == category_id
-        ]
-        
-        return {
-            "discount_amount": discount_amount,
-            "calculation_details": {
-                "type": "category_based",
-                "category_id": str(category_id),
-                "category_items_total": float(category_items_total),
-                "percentage": float(percentage),
-                "discount_amount": float(discount_amount),
-                "items_affected": affected_items
+
+        elif self.rule.value_type == DiscountValueType.FLAT:
+            # Cap flat discount at base_amount (can't make it negative)
+            discount_amount = min(self.rule.value, Decimal(str(base_amount))).quantize(
+                Decimal("0.01")
+            )
+
+            return {
+                "discount_amount": discount_amount,
+                "calculation_details": {
+                    "scope": self.rule.scope.value,
+                    "value_type": "flat",
+                    "base_amount": float(base_amount),
+                    "flat_amount": float(self.rule.value),
+                    "discount_amount": float(discount_amount),
+                    "capped_at_base": discount_amount < self.rule.value,
+                    "items_affected": items_affected,
+                },
             }
-        }
+
+        elif self.rule.value_type == DiscountValueType.BOGO:
+            # BOGO implementation (future)
+            # For now, return zero discount
+            return {
+                "discount_amount": Decimal("0.00"),
+                "calculation_details": {
+                    "scope": self.rule.scope.value,
+                    "value_type": "bogo",
+                    "message": "BOGO discounts not yet implemented",
+                },
+            }
+
+        else:
+            # Unknown value_type
+            return {
+                "discount_amount": Decimal("0.00"),
+                "calculation_details": {
+                    "error": f"Unknown value_type: {self.rule.value_type}",
+                },
+            }
 
 
 # Strategy registry for dynamic dispatch
+# With generic design, we only need one strategy for all types
 STRATEGY_MAP = {
-    "PERCENTAGE": PercentageDiscountStrategy,
-    "FLAT_LOYALTY": FlatLoyaltyDiscountStrategy,
-    "CATEGORY_BASED": CategoryBasedDiscountStrategy,
+    "CART:PERCENTAGE": GenericDiscountStrategy,
+    "CART:FLAT": GenericDiscountStrategy,
+    "CATEGORY:PERCENTAGE": GenericDiscountStrategy,
+    "CATEGORY:FLAT": GenericDiscountStrategy,
+    "PRODUCT:PERCENTAGE": GenericDiscountStrategy,
+    "PRODUCT:FLAT": GenericDiscountStrategy,
+    "CART:BOGO": GenericDiscountStrategy,  # Future
+    "CATEGORY:BOGO": GenericDiscountStrategy,  # Future
+    "PRODUCT:BOGO": GenericDiscountStrategy,  # Future
 }
+
+
+def get_strategy(rule: "DiscountRule", session: Session) -> GenericDiscountStrategy:
+    """
+    Get appropriate strategy for a discount rule.
+
+    Args:
+        rule: The discount rule
+        session: Database session
+
+    Returns:
+        GenericDiscountStrategy instance
+    """
+    # All rules now use GenericDiscountStrategy
+    return GenericDiscountStrategy(rule, session)

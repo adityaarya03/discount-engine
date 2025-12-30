@@ -75,27 +75,59 @@ def create_discount_rule(
     session: DBSession
 ):
     """
-    Create a new discount rule.
-    
+    Create a new discount rule with type-safe conditions.
+
     **Requires admin privileges.**
-    
-    The config field should contain:
-    - conditions: When the discount applies
-    - action: What discount to give
-    
-    Examples in DiscountRuleCreate schema documentation.
+
+    The API validates conditions based on scope:
+    - CART scope: requires CartConditions (min_cart_value, min_purchases)
+    - CATEGORY scope: requires CategoryConditions (category_id, min_quantity)
+    - PRODUCT scope: requires ProductConditions (product_ids)
+
+    Examples:
+
+    1. Cart-level 10% discount:
+    ```json
+    {
+      "name": "10% off cart > ₹5000",
+      "scope": "CART",
+      "value_type": "PERCENTAGE",
+      "value": 10.0,
+      "conditions": {"min_cart_value": 5000},
+      "max_discount_amount": 1000,
+      "is_stackable": false
+    }
+    ```
+
+    2. Category-level 5% discount:
+    ```json
+    {
+      "name": "5% off Electronics",
+      "scope": "CATEGORY",
+      "value_type": "PERCENTAGE",
+      "value": 5.0,
+      "conditions": {
+        "category_id": "uuid-here",
+        "min_quantity": 3
+      },
+      "is_stackable": true
+    }
+    ```
     """
     rule = DiscountRule(
         name=rule_data.name,
-        discount_type=rule_data.discount_type,
+        scope=rule_data.scope,
+        value_type=rule_data.value_type,
+        value=rule_data.value,
         priority=rule_data.priority,
         is_active=rule_data.is_active,
         is_stackable=rule_data.is_stackable,
-        config=rule_data.config,
+        coupon_code=rule_data.coupon_code,
+        config=rule_data.to_db_config(),  # Convert Pydantic → JSONB
         start_date=rule_data.start_date,
         end_date=rule_data.end_date
     )
-    
+
     session.add(rule)
     session.commit()
     session.refresh(rule)

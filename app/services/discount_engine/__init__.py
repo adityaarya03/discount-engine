@@ -2,15 +2,13 @@
 from app.services.discount_engine.engine import DiscountEngine
 from app.services.discount_engine.strategies import (
     DiscountStrategy,
-    PercentageDiscountStrategy,
-    FlatLoyaltyDiscountStrategy,
-    CategoryBasedDiscountStrategy,
+    GenericDiscountStrategy,
+    get_strategy,
 )
 
 __all__ = [
     "DiscountEngine",
     "DiscountStrategy",
-    "PercentageDiscountStrategy",
-    "FlatLoyaltyDiscountStrategy",
-    "CategoryBasedDiscountStrategy",
+    "GenericDiscountStrategy",
+    "get_strategy",
 ]

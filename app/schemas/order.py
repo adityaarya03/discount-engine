@@ -3,6 +3,7 @@ Pydantic schemas for order-related requests and responses.
 """
 from uuid import UUID
 from decimal import Decimal
+from typing import Optional
 from pydantic import BaseModel, Field
 from app.models.order import OrderStatus
 
@@ -16,6 +17,11 @@ class OrderItemCreate(BaseModel):
 class OrderCreate(BaseModel):
     """Schema for creating an order."""
     items: list[OrderItemCreate] = Field(min_length=1, description="At least one item required")
+    coupon_code: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description="Optional coupon code to apply (e.g., 'SAVE20')"
+    )
 
 
 class OrderItemResponse(BaseModel):

@@ -31,6 +31,10 @@ def create_order(
 ):
     """
     Create a new order with automatic discount calculation.
+
+    - Auto-apply discounts are evaluated automatically
+    - Optional coupon_code can be provided for manual-entry discounts
+    - Both auto-apply and coupon discounts can be combined if stackable
     """
     # Validate all products exist and have stock
     product_ids = [item.product_id for item in order_data.items]
@@ -90,9 +94,9 @@ def create_order(
     session.commit()
     session.refresh(order)
     
-    # Apply discount engine
+    # Apply discount engine (with optional coupon code)
     discount_engine = DiscountEngine(session)
-    discount_result = discount_engine.apply_discounts(order, current_user)
+    discount_result = discount_engine.apply_discounts(order, current_user, order_data.coupon_code)
     
     session.refresh(order)
     
@@ -181,13 +185,73 @@ def get_order(
     applied_discounts = [
         AppliedDiscountResponse(
             rule_name=ad.discount_rule.name,
-            rule_type=ad.discount_rule.discount_type.value,
+            rule_type=f"{ad.discount_rule.scope.value}:{ad.discount_rule.value_type.value}",
             discount_amount=float(ad.discount_amount),
             details=ad.calculation_details
         )
         for ad in order.applied_discounts
     ]
     
+    return OrderResponse(
+        id=order.id,
+        user_id=order.user_id,
+        status=order.status,
+        subtotal=order.subtotal,
+        discount_amount=order.discount_amount,
+        tax_amount=order.tax_amount,
+        total_amount=order.total_amount,
+        created_at=str(order.created_at),
+        items=[OrderItemResponse.model_validate(item) for item in order.items],
+        applied_discounts=applied_discounts
+    )
+
+
+@router.patch("/{order_id}/status", response_model=OrderResponse)
+def update_order_status(
+    order_id: UUID,
+    new_status: OrderStatus,
+    current_user: CurrentUser,
+    session: DBSession
+):
+    """
+    Update order status (for testing loyalty features).
+
+    Status flow:
+    - PENDING → CONFIRMED → COMPLETED
+    - PENDING → CANCELLED
+    - COMPLETED → RETURNED
+
+    Note: In production, this would have role-based access control.
+    For testing, any user can update their own orders.
+    """
+    query = select(Order).where(Order.id == order_id)
+    result = session.exec(query)
+    order = result.one_or_none()
+
+    if not order:
+        raise NotFoundException(detail="Order not found")
+
+    # Security: Users can only update their own orders
+    if order.user_id != current_user.id:
+        raise NotFoundException(detail="Order not found")
+
+    # Update status
+    order.status = new_status
+    session.add(order)
+    session.commit()
+    session.refresh(order)
+
+    # Build response
+    applied_discounts = [
+        AppliedDiscountResponse(
+            rule_name=ad.discount_rule.name,
+            rule_type=f"{ad.discount_rule.scope.value}:{ad.discount_rule.value_type.value}",
+            discount_amount=float(ad.discount_amount),
+            details=ad.calculation_details
+        )
+        for ad in order.applied_discounts
+    ]
+
     return OrderResponse(
         id=order.id,
         user_id=order.user_id,

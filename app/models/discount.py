@@ -13,60 +13,85 @@ if TYPE_CHECKING:
     from app.models.order import Order
 
 
-class DiscountType(str, Enum):
-    PERCENTAGE = "PERCENTAGE"           # 10% off on cart > ₹5000
-    FLAT_LOYALTY = "FLAT_LOYALTY"       # ₹500 off after 5 purchases
-    CATEGORY_BASED = "CATEGORY_BASED"   # 5% off on 3+ Electronics items
+class DiscountScope(str, Enum):
+    """Where the discount applies."""
+    CART = "CART"           # Entire cart
+    CATEGORY = "CATEGORY"   # Specific product category
+    PRODUCT = "PRODUCT"     # Specific products
+
+
+class DiscountValueType(str, Enum):
+    """How the discount value is calculated."""
+    PERCENTAGE = "PERCENTAGE"  # e.g., 10% off
+    FLAT = "FLAT"             # e.g., ₹500 off
+    BOGO = "BOGO"             # Buy one get one (future)
 
 
 class DiscountRule(SQLModel, TimestampMixin, table=True):
     """
-    Discount rule with flexible JSONB configuration.
-    
-    This design allows admins to create new discount rules without code changes.
-    
+    Generic discount rule with scope + value_type separation.
+
     Attributes:
         id: Unique identifier
         name: Offer name
-        discount_type: Type of discount (enum)
+        scope: Where discount applies (CART, CATEGORY, PRODUCT)
+        value_type: How value is calculated (PERCENTAGE, FLAT, BOGO)
+        value: The discount amount/percentage
         priority: For stacking - lower number applies first
         is_active: Whether rule is currently enabled
         is_stackable: Whether this discount can combine with others
-        config: JSONB field storing conditions and actions
-        
+        coupon_code: NULL = auto-apply, non-NULL = manual coupon entry
+        config: JSONB field storing conditions and additional settings
+
     Example configs:
-    
-    1. Percentage discount:
+
+    1. Cart-level 10% discount with max cap (stackable for all):
     {
         "conditions": {"min_cart_value": 5000},
-        "action": {"percentage": 10}
+        "max_discount_amount": 1000,
+        "loyalty_stacking_only": false
     }
-    
-    2. Flat loyalty discount:
-    {
-        "conditions": {"min_purchases": 5, "status_filter": ["COMPLETED"]},
-        "action": {"flat_amount": 500}
-    }
-    
-    3. Category-based discount:
+
+    2. Category-level 5% discount (stackable only for loyalty members):
     {
         "conditions": {
             "category_id": "uuid-here",
             "min_quantity": 3
         },
-        "action": {"percentage": 5}
+        "max_discount_amount": 500,
+        "loyalty_stacking_only": true
+    }
+
+    3. Cart-level flat ₹500 coupon (stackable for all):
+    {
+        "conditions": {"min_cart_value": 1000},
+        "loyalty_stacking_only": false
     }
     """
     __tablename__ = "discount_rules"
-    
+
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(max_length=255)
-    discount_type: DiscountType = Field(index=True)
+
+    # Generic design: scope + value_type + value
+    scope: DiscountScope = Field(index=True)
+    value_type: DiscountValueType = Field(index=True)
+    value: Decimal = Field(max_digits=10, decimal_places=2, description="Discount amount (percentage or flat)")
     
     priority: int = Field(default=0, index=True)  # Lower = applies first
     is_active: bool = Field(default=True, index=True)
     is_stackable: bool = Field(default=False)
-    
+
+    # PRODUCTION ENHANCEMENT: Coupon code support
+    # NULL = auto-apply discount, non-NULL = manual coupon entry
+    coupon_code: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        unique=True,
+        index=True,
+        description="Coupon code for manual entry (e.g., 'SAVE20'). NULL for auto-apply."
+    )
+
     # THE POWER MOVE: JSONB for flexibility
     # Using Column with JSON type for proper JSONB support in PostgreSQL
     config: dict[str, Any] = Field(sa_column=Column(JSON))
@@ -79,7 +104,7 @@ class DiscountRule(SQLModel, TimestampMixin, table=True):
     applied_to_orders: list["AppliedDiscount"] = Relationship(back_populates="discount_rule")
     
     def __repr__(self) -> str:
-        return f"<DiscountRule {self.name} ({self.discount_type.value})>"
+        return f"<DiscountRule {self.name} ({self.scope.value}:{self.value_type.value})>"
 
 
 class AppliedDiscount(SQLModel, table=True):
