@@ -217,32 +217,38 @@ discount-engine/
    cd discount-engine
    ```
 
-2. **Create environment file**
+2. **Create and activate virtual environment**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. **Create environment file**
    ```bash
    cp .env.example .env
    ```
 
-3. **Start PostgreSQL with Docker**
+4. **Start PostgreSQL with Docker**
    ```bash
    docker-compose up -d
    ```
 
-4. **Install Python dependencies**
+5. **Install Python dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-5. **Run database migrations & seed data**
+6. **Run database migrations & seed data**
    ```bash
-   python scripts/seed_data.py
+   python -m scripts.seed_data
    ```
 
-6. **Start the application**
+7. **Start the application**
    ```bash
    uvicorn app.main:app --reload --port 8000
    ```
 
-7. **Access the API**
+8. **Access the API**
    - API Base: http://localhost:8000/api/v1
    - Swagger Docs: http://localhost:8000/docs
    - ReDoc: http://localhost:8000/redoc
